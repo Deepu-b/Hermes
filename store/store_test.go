@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestPutOverwrite(t *testing.T) {
 	store := NewStore()
@@ -71,5 +74,82 @@ func TestInvalidPutMode(t *testing.T) {
 	err := store.Write("a", Entry{Value: []byte("1")}, PutMode(10))
 	if err != ErrInvalidPutMode {
 		t.Fatalf("expected ErrInvalidPutMode, got %v", err)
+	}
+}
+
+func TestReadWithoutTTL(t *testing.T) {
+	store := NewStore()
+
+	_ = store.Write("a", Entry{Value: []byte("1")}, PutOverwrite)
+
+	val, ok := store.Read("a")
+	if !ok {
+		t.Fatalf("expected key to exist")
+	}
+
+	if string(val.Value) != "1" {
+		t.Fatalf("unexpected value")
+	}
+}
+
+func TestExpireExistingKey(t *testing.T) {
+	store := NewStore()
+
+	_ = store.Write("a", Entry{Value: []byte("1")}, PutOverwrite)
+
+	ok := store.Expire("a", 50*time.Millisecond)
+	if !ok {
+		t.Fatalf("expected expire to succeed")
+	}
+
+	val, ok := store.Read("a")
+	if !ok {
+		t.Fatalf("key should exist before expiry")
+	}
+
+	if string(val.Value) != "1" {
+		t.Fatalf("unexpected value")
+	}
+}
+
+func TestExpiredKeyIsDeletedOnRead(t *testing.T) {
+	store := NewStore()
+
+	_ = store.Write("a", Entry{Value: []byte("1")}, PutOverwrite)
+	_ = store.Expire("a", 10*time.Millisecond)
+
+	time.Sleep(20 * time.Millisecond)
+
+	_, ok := store.Read("a")
+	if ok {
+		t.Fatalf("expected key to be expired")
+	}
+
+	_, ok = store.Read("a")
+	if ok {
+		t.Fatalf("expired key should not reappear")
+	}
+}
+
+func TestExpireMissingKey(t *testing.T) {
+	store := NewStore()
+
+	ok := store.Expire("missing", 10*time.Second)
+	if ok {
+		t.Fatalf("expected expire to fail for missing key")
+	}
+}
+
+func TestExpireDoesNotResurrectExpiredKey(t *testing.T) {
+	store := NewStore()
+
+	_ = store.Write("a", Entry{Value: []byte("1")}, PutOverwrite)
+	_ = store.Expire("a", 10*time.Millisecond)
+
+	time.Sleep(20 * time.Millisecond)
+
+	ok := store.Expire("a", time.Second)
+	if ok {
+		t.Fatalf("expected expire to fail on expired key")
 	}
 }

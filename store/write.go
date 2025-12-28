@@ -1,6 +1,9 @@
 package store
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 /*
 Errors returned by write operations to signal
@@ -17,6 +20,7 @@ PutMode defines the write semantics applied when
 writing a key-value pair to the store.
 */
 type PutMode int
+
 const (
 	PutOverwrite PutMode = iota // always write
 	PutIfAbsent                 // write only if key does not exist
@@ -30,6 +34,7 @@ It defines the minimal contract for interacting with the store.
 type DataStore interface {
 	Write(key string, value Entry, mode PutMode) error
 	Read(key string) (Entry, bool)
+	Expire(key string, ttl time.Duration) bool
 }
 
 /*
@@ -38,10 +43,10 @@ It intentionally exposes only minimal read/write primitives to avoid
 leaking the underlying store implementation.
 */
 type writeContext interface {
-    get(key string) (Entry, bool)
-    set(key string, value Entry)
+	get(key string) (Entry, bool)
+	set(key string, value Entry)
+	remove(key string)
 }
-
 
 /*
 PutFunc represents a write strategy implementing specific write semantics.
@@ -80,9 +85,10 @@ func updateStrategy(wctx writeContext, key string, value Entry) error {
 }
 
 /*
-Entry represents a single value stored in memory.
-Additional metadata (expiry, versioning, etc.) will be added later.
+Entry represents a single value stored in memory along with expiry.
+Additional metadata (versioning, etc.) will be added later.
 */
 type Entry struct {
-	Value []byte
+	Value     []byte
+	ExpiresAt time.Time
 }
