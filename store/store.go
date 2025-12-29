@@ -2,16 +2,31 @@ package store
 
 import "time"
 
+/*
+store is the core in-memory key-value store.
+It contains no concurrency control and must be accessed
+by a single goroutine or protected by an external mechanism.
+*/
 type store struct {
 	data map[string]Entry
 }
 
+/*
+NewStore creates a non-concurrent store.
+Callers are responsible for ensuring safe access.
+*/
 func NewStore() DataStore {
 	return &store{
 		data: make(map[string]Entry),
 	}
 }
 
+/*
+Read returns the value for a key if present and not expired.
+
+Expired keys are removed lazily during reads to ensure
+they are never observable.
+*/
 func (s *store) Read(key string) (Entry, bool) {
 	val, ok := s.get(key)
 	if !ok {
@@ -25,6 +40,10 @@ func (s *store) Read(key string) (Entry, bool) {
 	return val, true
 }
 
+/*
+Write applies the specified write semantics to the store.
+The write behavior is determined by the provided PutMode.
+*/
 func (s *store) Write(key string, value Entry, mode PutMode) error {
 	strategy, ok := putFactories[mode]
 	if !ok {
@@ -34,6 +53,12 @@ func (s *store) Write(key string, value Entry, mode PutMode) error {
 	return strategy(s, key, value)
 }
 
+/*
+Expire attaches a TTL to an existing key.
+
+If the key is already expired, it is removed and the
+operation fails.
+*/
 func (s *store) Expire(key string, ttl time.Duration) bool {
 	val, ok := s.get(key)
 	if !ok {
@@ -50,15 +75,25 @@ func (s *store) Expire(key string, ttl time.Duration) bool {
 	return true
 }
 
+/*
+get retrieves the raw entry without applying expiration logic.
+Intended for internal use only.
+*/
 func (s *store) get(key string) (Entry, bool) {
 	val, ok := s.data[key]
 	return val, ok
 }
 
+/*
+set inserts or overwrites a value in the store.
+*/
 func (s *store) set(key string, value Entry) {
 	s.data[key] = value
 }
 
+/*
+remove deletes a key from the store.
+*/
 func (s *store) remove(key string) {
 	delete(s.data, key)
 }
