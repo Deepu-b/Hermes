@@ -11,26 +11,34 @@ import (
 
 var handleDelay = 10 * time.Millisecond
 
+/*
+Server manages listener lifecycle and client connection goroutines.
+*/
 type Server struct {
 	addr  string
 	store store.DataStore
 
-	ln    net.Listener
-	wg    sync.WaitGroup
-	ready chan struct{} // to block Close till Start is initialised
+	ln           net.Listener
+	wg           sync.WaitGroup
+	ready        chan struct{}	// Signals that the listener is initialized
+	shuttingDown chan struct{}	 // Signals intentional server shutdown ~ not sure about it :/
 
-	HandleFunc func(net.Conn) // shall be modified later for DataStorehandler
+	HandleFunc func(net.Conn, string) // Optional hook for testing or custom handling
 
 }
 
 func NewServer(addr string, store store.DataStore) *Server {
 	return &Server{
-		addr:  addr,
-		store: store,
-		ready: make(chan struct{}),
+		addr:         addr,
+		store:        store,
+		ready:        make(chan struct{}),
+		shuttingDown: make(chan struct{}),
 	}
 }
 
+/*
+Start begins listening and accepts connections until shutdown.
+*/
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
@@ -45,10 +53,12 @@ func (s *Server) Start() error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			if _, ok := err.(net.Error); ok {
-				continue
+			select  {
+			case <- s.shuttingDown:
+				return nil
+			default:
+				return err
 			}
-			return err
 		}
 
 		s.wg.Add(1)
@@ -59,22 +69,16 @@ func (s *Server) Start() error {
 	}
 }
 
+/*
+Stop initiates graceful shutdown:
+- stops accepting new connections
+- waits for active handlers to exit
+*/
 func (s *Server) Stop() {
 	<-s.ready
+	close(s.shuttingDown)
 	if s.ln != nil {
 		s.ln.Close()
 	}
 	s.wg.Wait()
-}
-
-func (s *Server) handleConnection(conn net.Conn) {
-	defer conn.Close()
-	if s.HandleFunc != nil {
-		s.HandleFunc(conn)
-		return
-	}
-
-	// Default production behavior
-	time.Sleep(handleDelay)
-	// Default production behavior
 }

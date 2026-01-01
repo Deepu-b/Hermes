@@ -31,7 +31,7 @@ func TestServerAcceptsConnection(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	s.HandleFunc = func(c net.Conn) {
+	s.HandleFunc = func(c net.Conn, line string) {
 		defer c.Close()
 		wg.Done()
 	}
@@ -59,7 +59,7 @@ func TestServerHandlesMultipleConnections(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(clients)
 
-	s.HandleFunc = func(c net.Conn) {
+	s.HandleFunc = func(c net.Conn, line string) {
 		defer c.Close()
 		wg.Done()
 		fmt.Printf("handled conn for %s \n", s.ln.Addr().String())
