@@ -11,7 +11,7 @@ import (
 executeCommand maps a validated protocol command to datastore operations.
 Note: It contains no networking logic and no concurrency concerns.
 */
-func (s *Server) executeCommand(cmd protocol.Command, dataStore store.DataStore) Response {
+func executeCommand(cmd protocol.Command, dataStore store.DataStore) Response {
 	switch cmd.Name {
 	case protocol.CommandGet:
 		key := cmd.Args[0]

@@ -4,12 +4,9 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"time"
 
 	"hermes/store"
 )
-
-var handleDelay = 10 * time.Millisecond
 
 /*
 Server manages listener lifecycle and client connection goroutines.
@@ -20,8 +17,7 @@ type Server struct {
 
 	ln           net.Listener
 	wg           sync.WaitGroup
-	ready        chan struct{}	// Signals that the listener is initialized
-	shuttingDown chan struct{}	 // Signals intentional server shutdown ~ not sure about it :/
+	ready        chan struct{}        // Signals that the listener is initialized
 
 	HandleFunc func(net.Conn, string) // Optional hook for testing or custom handling
 
@@ -32,7 +28,6 @@ func NewServer(addr string, store store.DataStore) *Server {
 		addr:         addr,
 		store:        store,
 		ready:        make(chan struct{}),
-		shuttingDown: make(chan struct{}),
 	}
 }
 
@@ -53,12 +48,7 @@ func (s *Server) Start() error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			select  {
-			case <- s.shuttingDown:
-				return nil
-			default:
-				return err
-			}
+			return nil
 		}
 
 		s.wg.Add(1)
@@ -69,6 +59,10 @@ func (s *Server) Start() error {
 	}
 }
 
+func (s *Server) handleConnection(conn net.Conn) {
+	handleConnection(conn, s.store)
+}
+
 /*
 Stop initiates graceful shutdown:
 - stops accepting new connections
@@ -76,7 +70,6 @@ Stop initiates graceful shutdown:
 */
 func (s *Server) Stop() {
 	<-s.ready
-	close(s.shuttingDown)
 	if s.ln != nil {
 		s.ln.Close()
 	}

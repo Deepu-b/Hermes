@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"hermes/protocol"
+	"hermes/store"
 )
 
 /*
@@ -20,7 +21,7 @@ const (
 	readTimeout  = time.Minute
 	writeTimeout = time.Minute
 
-	maxLineSize  = 4 * 1024 // 4KB
+	maxLineSize = 4 * 1024 // 4KB
 )
 
 /*
@@ -31,7 +32,7 @@ It is responsible for:
 - Protocol parsing
 - Writing responses
 */
-func (s *Server) handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, store store.DataStore) {
 	defer conn.Close()
 
 	reader := bufio.NewReaderSize(conn, maxLineSize)
@@ -73,7 +74,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Execute against datastore
-		resp := s.executeCommand(cmd, s.store)
+		resp := executeCommand(cmd, store)
 
 		conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 		if _, err := fmt.Fprintln(conn, resp.String()); err != nil {
