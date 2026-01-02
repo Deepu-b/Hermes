@@ -1,11 +1,13 @@
 package server
 
 import (
-	// "net"
+	"bufio"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"hermes/store"
 )
@@ -14,7 +16,9 @@ func TestServerStartAndStop(t *testing.T) {
 	s := NewServer("127.0.0.1:0", store.NewStore())
 
 	go func() {
-		_ = s.Start()
+		if err := s.Start(); err != nil {
+			t.Errorf("server start failed: %v", err)
+		}
 	}()
 	<-s.ready
 
@@ -28,57 +32,89 @@ func TestServerStartAndStop(t *testing.T) {
 func TestServerAcceptsConnection(t *testing.T) {
 	s := NewServer("127.0.0.1:0", store.NewStore())
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	s.HandleFunc = func(c net.Conn, line string) {
-		defer c.Close()
-		wg.Done()
-	}
-
 	go func() {
 		_ = s.Start()
 	}()
 	<-s.ready
 
-	addr := s.ln.Addr().String()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := net.Dial("tcp", s.ln.Addr().String())
 	if err != nil {
-		t.Fatalf("failed to connect to server: %v", err)
+		t.Fatalf("failed to connect: %v", err)
 	}
 
-	wg.Wait()
-	s.Stop()
+	// Send valid command
+	fmt.Fprintln(conn, "GET missing")
+
+	// Read response
+	reader := bufio.NewReader(conn)
+	resp, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("failed to read response: %v", err)
+	}
+
+	if strings.TrimSpace(resp) != "(nil)" {
+		t.Fatalf("unexpected response: %q", resp)
+	}
+
 	conn.Close()
+	s.Stop()
 }
 
 func TestServerHandlesMultipleConnections(t *testing.T) {
 	s := NewServer("127.0.0.1:0", store.NewStore())
 
+	go func() {
+		if err := s.Start(); err != nil {
+			t.Errorf("server start failed: %v", err)
+		}
+	}()
+	<-s.ready
+
 	const clients = 5
+	addr := s.ln.Addr().String()
+
 	var wg sync.WaitGroup
 	wg.Add(clients)
 
-	s.HandleFunc = func(c net.Conn, line string) {
-		defer c.Close()
-		wg.Done()
-		fmt.Printf("handled conn for %s \n", s.ln.Addr().String())
+	for i := 0; i < clients; i++ {
+		go func(i int) {
+			defer wg.Done()
+
+			conn, err := net.Dial("tcp", addr)
+			if err != nil {
+				t.Fatalf("failed to connect: %v", err)
+			}
+			defer conn.Close()
+
+			// Send valid command
+			fmt.Fprintln(conn, "GET missing")
+
+			// Read response
+			reader := bufio.NewReader(conn)
+			resp, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("failed to read response: %v", err)
+			}
+
+			if strings.TrimSpace(resp) != "(nil)" {
+				t.Fatalf("unexpected response: %q", resp)
+			}
+		}(i)
 	}
 
+	// Wait for all clients to finish
+	done := make(chan struct{})
 	go func() {
-		_ = s.Start()
+		wg.Wait()
+		close(done)
 	}()
 
-	<-s.ready
-
-	addr := s.ln.Addr().String()
-	for i := 0; i < clients; i++ {
-		_, err := net.Dial("tcp", addr)
-		if err != nil {
-			t.Fatalf("client %d failed to connect: %v", i, err)
-		}
+	select {
+	case <-done:
+		// success
+	case <-time.After(3 * time.Second):
+		t.Fatal("clients did not complete in time")
 	}
 
-	wg.Wait()
 	s.Stop()
 }
