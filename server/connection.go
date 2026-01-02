@@ -19,6 +19,8 @@ They are used as resource-guardrails, not client semantics.
 const (
 	readTimeout  = time.Minute
 	writeTimeout = time.Minute
+
+	maxLineSize  = 4 * 1024 // 4KB
 )
 
 /*
@@ -32,12 +34,18 @@ It is responsible for:
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
+	reader := bufio.NewReaderSize(conn, maxLineSize)
 
 	for {
 		conn.SetReadDeadline(time.Now().Add(readTimeout))
-		line, err := reader.ReadString('\n')
+		buf, err := reader.ReadSlice('\n')
 		if err != nil {
+
+			// Line too large (memory protection)
+			if errors.Is(err, bufio.ErrBufferFull) {
+				fmt.Printf("line too long from %s\n", conn.RemoteAddr())
+				return
+			}
 
 			// Client closed connection
 			if errors.Is(err, io.EOF) {
@@ -53,10 +61,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
+		line := strings.TrimSpace(string(buf))
 		fmt.Printf("received from %s: %q\n", conn.RemoteAddr(), line)
 
 		// Parse command according to protocol rules
-		line = strings.TrimSpace(line)
 		cmd, err := protocol.ParseLine(line)
 		if err != nil {
 			conn.SetWriteDeadline(time.Now().Add(writeTimeout))
