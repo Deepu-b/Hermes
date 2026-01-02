@@ -16,7 +16,7 @@ Command types are centralized here to remove hard-coded dependencies
 const (
 	CommandGet    = "GET"
 	CommandSet    = "SET"
-	CommandExpire = "Expire"
+	CommandExpire = "EXPIRE"
 )
 
 /*
