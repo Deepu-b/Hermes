@@ -35,12 +35,51 @@ observable behavior.
 
 ---
 
+## Networking
+- TCP server using Go’s `net` package
+- One goroutine per client connection
+- Line-based request/response protocol
+- Graceful connection lifecycle handling
+- Read and write timeouts to protect against slow or stalled clients
+- Input size limits to prevent unbounded memory usage
+
+---
+
+## Protocol & Command Layer
+- Explicit command parsing and validation
+- Central command registry with argument type checking
+- Clear separation:
+  - parse → validate → execute → respond
+- Structured server responses:
+  - OK
+  - value
+  - nil
+  - client error
+  - server error
+
+---
+
 ## Design Notes
 
 - Expiration is enforced lazily to keep the core simple.
 - Reads may mutate state due to lazy expiration.
 - Concurrency is handled outside the core store logic.
 - All implementations follow the same correctness contract.
+- Protocol parsing is decoupled from execution.
+- Networking code does not assume datastore implementation details.
+- Resource protection (timeouts, buffer limits) is enforced at the server layer.
+
+---
+
+## Explicit Non-Goals
+
+- Binary-safe payloads
+- Command pipelining
+- Transactions
+- Persistence or crash recovery
+- Distributed or replicated operation
+
+These are intentionally excluded.
 
 ---
 
@@ -51,16 +90,22 @@ observable behavior.
 - No persistence
 - No eviction policies
 - Standard library only
+- TCP-based access
 
 ---
 
 ---
 
-## Development Notes
+## Testing
 
-Some test cases were created with the assistance of AI tools and
-then reviewed and adapted to match Hermes’ correctness guarantees
-and design decisions.
+- Unit tests cover storage, protocol parsing, command execution, and responses
+- Integration tests cover server lifecycle and client interaction
+- All tests pass under the Go race detector
+
+Some test cases were created with the assistance of AI tools and then reviewed
+and adapted to match Hermes’ correctness guarantees and design decisions.
+
+---
 
 ## Status
 
