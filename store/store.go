@@ -33,7 +33,8 @@ func (s *store) Read(key string) (Entry, bool) {
 		return Entry{}, false
 	}
 
-	if !val.ExpiresAt.IsZero() && time.Now().After(val.ExpiresAt) {
+	now := GetUnixTimestamp(time.Now())
+	if val.ExpiresAtMillis != 0 && now >= val.ExpiresAtMillis {
 		s.remove(key)
 		return Entry{}, false
 	}
@@ -59,18 +60,19 @@ Expire attaches a TTL to an existing key.
 If the key is already expired, it is removed and the
 operation fails.
 */
-func (s *store) Expire(key string, ttl time.Duration) bool {
+func (s *store) Expire(key string, unixTimestampMilli int64) bool{
 	val, ok := s.get(key)
 	if !ok {
 		return false
 	}
 
-	if !val.ExpiresAt.IsZero() && time.Now().After(val.ExpiresAt) {
+	now := GetUnixTimestamp(time.Now())
+	if val.ExpiresAtMillis != 0 && now >= val.ExpiresAtMillis {
 		s.remove(key)
 		return false
 	}
 
-	val.ExpiresAt = time.Now().Add(ttl)
+	val.ExpiresAtMillis = unixTimestampMilli
 	s.set(key, val)
 	return true
 }

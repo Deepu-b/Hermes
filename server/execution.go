@@ -34,7 +34,8 @@ func executeCommand(cmd protocol.Command, dataStore store.DataStore) Response {
 		err := dataStore.Write(
 			key,
 			store.Entry{
-				Value: []byte(val),
+				Value:           []byte(val),
+				ExpiresAtMillis: 0,
 			},
 			store.PutOverwrite,
 		)
@@ -59,7 +60,8 @@ func executeCommand(cmd protocol.Command, dataStore store.DataStore) Response {
 			}
 		}
 
-		ok := dataStore.Expire(key, time.Duration(ttlSec)*time.Second)
+		expirationTime := store.GetUnixTimestamp(time.Now().Add(time.Duration(ttlSec) * time.Second))
+		ok := dataStore.Expire(key, expirationTime)
 		if !ok {
 			return Response{
 				Kind: ResponseNil,
