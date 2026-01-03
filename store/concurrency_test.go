@@ -119,7 +119,7 @@ func testConcurrentExpireAndRead(t *testing.T, newStore storeFactory) {
 	s := newStore()
 
 	_ = s.Write("key", Entry{Value: []byte("value")}, PutOverwrite)
-	_ = s.Expire("key", 20*time.Millisecond)
+	_ = s.Expire("key", GetUnixTimestamp(time.Now().Add(20*time.Millisecond)))
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -151,7 +151,7 @@ func testExpiredKeyCanBeRecreatedExplicitly(t *testing.T, newStore storeFactory)
 	s := newStore()
 
 	_ = s.Write("key", Entry{Value: []byte("value")}, PutOverwrite)
-	_ = s.Expire("key", 10*time.Millisecond)
+	_ = s.Expire("key", GetUnixTimestamp(time.Now().Add(10*time.Millisecond)))
 
 	time.Sleep(20 * time.Millisecond)
 

@@ -1,7 +1,5 @@
 package store
 
-import "time"
-
 /*
 operation represents the type of request sent to the event loop.
 Each operation corresponds to one DataStore method.
@@ -22,11 +20,11 @@ Only the event loop goroutine is allowed to execute the request
 and touch the underlying store.
 */
 type request struct {
-	op    operation
-	key   string
-	value Entry
-	mode  PutMode
-	ttl   time.Duration
+	op        operation
+	key       string
+	value     Entry
+	mode      PutMode
+	expiresAt int64
 
 	// reply is a per-request response channel used to return
 	// results back to the caller synchronously.
@@ -107,7 +105,7 @@ func (s *eventLoopStore) loop(store *store) {
 			}
 
 		case opExpire:
-			ok := store.Expire(req.key, req.ttl)
+			ok := store.Expire(req.key, req.expiresAt)
 			req.reply <- response{
 				ok: ok,
 			}
@@ -162,14 +160,14 @@ until the TTL metadata is updated.
 Expired keys are removed lazily during reads, but all expiry
 decisions are serialized through the event loop.
 */
-func (s *eventLoopStore) Expire(key string, ttl time.Duration) bool {
+func (s *eventLoopStore) Expire(key string, unixTimestampMilli int64) bool {
 	reply := make(chan response, 1)
 
 	s.requests <- request{
-		op:    opExpire,
-		key:   key,
-		ttl:   ttl,
-		reply: reply,
+		op:        opExpire,
+		key:       key,
+		expiresAt: unixTimestampMilli,
+		reply:     reply,
 	}
 
 	resp := <-reply

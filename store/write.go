@@ -32,9 +32,15 @@ DataStore is the public interface exposed to consumers.
 It defines the minimal contract for interacting with the store.
 */
 type DataStore interface {
+	// Write stores a value for a key using the specified write semantics.
 	Write(key string, value Entry, mode PutMode) error
+
+	// Read returns the value for a key if it exists and is not expired.
 	Read(key string) (Entry, bool)
-	Expire(key string, ttl time.Duration) bool
+
+	// Expire sets an absolute expiration time (in Unix milliseconds) for a key.
+	// Returns false if the key does not exist or is already expired.
+	Expire(key string, unixTimestampMilli int64) bool
 }
 
 /*
@@ -87,8 +93,14 @@ func updateStrategy(wctx writeContext, key string, value Entry) error {
 /*
 Entry represents a single value stored in memory along with expiry.
 Additional metadata (versioning, etc.) will be added later.
+ExpiresAtUnix store expiration time as Unix milli-seconds; value of 0
+means no expiration
 */
 type Entry struct {
-	Value     []byte
-	ExpiresAt time.Time
+	Value           []byte
+	ExpiresAtMillis int64 // 0 means no expiration
+}
+
+func GetUnixTimestamp(t time.Time) int64 {
+	return t.UnixMilli()
 }

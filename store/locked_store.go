@@ -2,7 +2,6 @@ package store
 
 import (
 	"sync"
-	"time"
 )
 
 /*
@@ -54,8 +53,8 @@ func (s *lockedStore) Write(key string, value Entry, mode PutMode) error {
 /*
 Expire acquires the global lock and updates expiry metadata.
 */
-func (s *lockedStore) Expire(key string, ttl time.Duration) bool {
+func (s *lockedStore) Expire(key string, unixTimestampMilli int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.store.Expire(key, ttl)
+	return s.store.Expire(key, unixTimestampMilli)
 }

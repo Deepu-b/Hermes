@@ -3,7 +3,6 @@ package store
 import (
 	"hash/fnv"
 	"sync"
-	"time"
 )
 
 /*
@@ -67,11 +66,11 @@ func (s *shardedStore) Write(key string, value Entry, mode PutMode) error {
 /*
 Expire updates TTL metadata within the owning shard.
 */
-func (s *shardedStore) Expire(key string, ttl time.Duration) bool {
+func (s *shardedStore) Expire(key string, unixTimestampMilli int64) bool {
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
-	return shard.store.Expire(key, ttl)
+	return shard.store.Expire(key, unixTimestampMilli)
 }
 
 /*
@@ -85,8 +84,8 @@ func (s *shardedStore) getShard(key string) *shard {
 /*
 hashString computes a stable hash for shard selection.
 
-It uses Fowler-Noll-Vo-1a algorithm where starting from 
-a pre-defined offset, each byte b is xor-ed and multiplied 
+It uses Fowler-Noll-Vo-1a algorithm where starting from
+a pre-defined offset, each byte b is xor-ed and multiplied
 by pre-defined prime resulting in deterministic hash
 */
 func hashString(s string) uint32 {

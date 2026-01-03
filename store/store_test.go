@@ -97,7 +97,8 @@ func TestExpireExistingKey(t *testing.T) {
 
 	_ = store.Write("a", Entry{Value: []byte("1")}, PutOverwrite)
 
-	ok := store.Expire("a", 50*time.Millisecond)
+	expireTime := time.Now().Add(50*time.Millisecond)
+	ok := store.Expire("a", GetUnixTimestamp(expireTime))
 	if !ok {
 		t.Fatalf("expected expire to succeed")
 	}
@@ -116,7 +117,7 @@ func TestExpiredKeyIsDeletedOnRead(t *testing.T) {
 	store := NewStore()
 
 	_ = store.Write("a", Entry{Value: []byte("1")}, PutOverwrite)
-	_ = store.Expire("a", 10*time.Millisecond)
+	_ = store.Expire("a", GetUnixTimestamp(time.Now().Add(10*time.Millisecond)))
 
 	time.Sleep(20 * time.Millisecond)
 
@@ -134,7 +135,7 @@ func TestExpiredKeyIsDeletedOnRead(t *testing.T) {
 func TestExpireMissingKey(t *testing.T) {
 	store := NewStore()
 
-	ok := store.Expire("missing", 10*time.Second)
+	ok := store.Expire("missing", GetUnixTimestamp(time.Now().Add(10*time.Second)))
 	if ok {
 		t.Fatalf("expected expire to fail for missing key")
 	}
@@ -144,11 +145,11 @@ func TestExpireDoesNotResurrectExpiredKey(t *testing.T) {
 	store := NewStore()
 
 	_ = store.Write("a", Entry{Value: []byte("1")}, PutOverwrite)
-	_ = store.Expire("a", 10*time.Millisecond)
+	_ = store.Expire("a", GetUnixTimestamp(time.Now().Add(10*time.Millisecond)))
 
 	time.Sleep(20 * time.Millisecond)
 
-	ok := store.Expire("a", time.Second)
+	ok := store.Expire("a", GetUnixTimestamp(time.Now().Add(time.Second)))
 	if ok {
 		t.Fatalf("expected expire to fail on expired key")
 	}
