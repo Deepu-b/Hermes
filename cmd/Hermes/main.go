@@ -3,11 +3,21 @@ package main
 import (
 	"hermes/server"
 	"hermes/store"
+	"hermes/wal"
 )
 
 func main() {
-	store := store.NewShardedStore(16)
+	s := store.NewShardedStore(16)
+	w, err := wal.NewWAL("log.log")
+	if err != nil {
+		panic(err)
+	}
 
-	s := server.NewServer(":8080", store)
-	s.Start()
+	newStore, err := store.NewWalStore(s, w)
+	if err != nil {
+		panic(err)
+	}
+
+	server := server.NewServer(":8080", newStore)
+	server.Start()	// check by nc localhost 8080
 }

@@ -14,7 +14,7 @@ import (
 func startTestServer(t *testing.T) (*Server, string) {
 	t.Helper()
 
-	s := NewServer("127.0.0.1:0", store.NewStore())
+	s := NewServer("127.0.0.1:0", store.NewLockedStore())
 
 	go func() {
 		if err := s.Start(); err != nil {
