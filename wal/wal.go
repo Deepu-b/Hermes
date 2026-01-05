@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+/*
+SyncPolicy defines the durability policy of the WAL.
+A zero value means synchronous durability per write.
+Non-zero values trade durability for throughput.
+*/
+type SyncPolicy time.Duration
+
+const (
+	SyncEveryWrite  SyncPolicy = 0
+	SyncEverySecond SyncPolicy = SyncPolicy(1 * time.Second)
+)
+
 var (
 	// ErrWALClosed is returned when appending to a closed WAL.
 	ErrWALClosed = errors.New("wal is closed")
@@ -30,9 +42,23 @@ Key properties:
 The WAL records intent (SET, EXPIRE), not internal state.
 */
 type WAL interface {
+	// Append records a mutating command to the log.
 	Append(record WALRecord) error
+
+	// Replay replays all logged commands in order by invoking apply.
+	// Replay must be called before accepting new writes.
 	Replay(apply func(WALRecord) error) error
+
+	// Close flushes and closes the WAL. After Close, Append must not be used.
 	Close() error
+}
+
+/*
+Config defines input configuration for wal.
+*/
+type Config struct {
+	Path       string
+	SyncPolicy SyncPolicy
 }
 
 /*
@@ -64,6 +90,11 @@ type wal struct {
 
 	// closeOnce ensures the teardown logic is idempotent and thread-safe.
 	closeOnce sync.Once
+
+	// batchDuration controls periodic fsync behavior.
+	// When zero, every write is synchronously fsynced.
+	// When non-zero, durability is deferred to periodic syncs.
+	batchDuration time.Duration
 }
 
 /*
@@ -73,17 +104,18 @@ Flags used:
 - O_APPEND: Ensures writes always land at the end, preventing accidental overwrites.
 - O_DSYNC (Optional consideration): We rely on explicit Sync() calls instead for batching flexibility.
 */
-func NewWAL(path string) (WAL, error) {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+func NewWAL(config Config) (WAL, error) {
+	f, err := os.OpenFile(config.Path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return nil, err
 	}
 
 	wal := &wal{
-		path:     path,
-		file:     f,
-		reqChan:  make(chan request), // unbuffered, ie, every write waits for fsync inside (handshake) = Strong Consistency
-		doneChan: make(chan struct{}),
+		path:          config.Path,
+		file:          f,
+		reqChan:       make(chan request), // unbuffered, ie, every write waits for fsync inside (handshake) = Strong Consistency
+		doneChan:      make(chan struct{}),
+		batchDuration: time.Duration(config.SyncPolicy),
 	}
 
 	go wal.run()
@@ -116,7 +148,6 @@ func (w *wal) Append(record WALRecord) error {
 		payload:   payload,
 		reply:     reply,
 	}:
-		// Block until the worker confirms fsync completion
 		resp := <-reply
 		return resp.err
 
@@ -169,6 +200,9 @@ func (w *wal) Close() error {
 
 /*
 Replay reconstructs the state by iterating sequentially over the log.
+
+Replay MUST be called before accepting writes.
+It is not safe to interleave Replay with Append.
 
 Performance Note:
 This is a blocking operation meant to run during the "Cold Start" phase.
