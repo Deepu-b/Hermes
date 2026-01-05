@@ -18,10 +18,11 @@ This design eliminates the need for `sync.Mutex` locks around file operations an
 
 ## 2. Key Design Decisions
 
-### A. Strong Consistency (Unbuffered Channels)
-We use an **unbuffered channel** for the request loop.
-* **Decision:** `Append()` blocks until the worker confirms the write is on disk.
-* This prioritizes **Correctness** over **Throughput**. If the server crashes, we guarantee that any acknowledged write is safe. We do not use an in-memory buffer that could be lost on power failure.
+### A. Configurable Durability (Sync Policy)
+The WAL supports two durability modes via `SyncPolicy`:
+* **SyncEveryWrite (0):** Strong Consistency. Every `Append()` blocks until `fsync` completes. Slow but safe.
+* **SyncEverySecond (1s):** Eventual Consistency. Writes are flushed to the OS buffer immediately but `fsync` happens on a 1-second ticker. Improves throughput at the risk of losing 1 second of data on power loss.
+* **Flush-on-Close:** Regardless of policy, `Close()` always forces a final `fsync` to ensure graceful shutdowns persist all pending data.
 
 ### B. Binary Safety (Base64 Encoding)
 The WAL format is text-based but uses Base64 for values.

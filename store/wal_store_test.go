@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-
 type storeCase struct {
 	name string
 	new  func() DataStore
@@ -35,19 +34,24 @@ var storeCases = []storeCase{
 	},
 }
 
-// Returns: store, walPath, closeFunc, deleteFunc
+// Returns: store, walPath, closeWAL, cleanupFile
 type StoreFactory func() (DataStore, string, func(), func())
 
 func setupFactory(t *testing.T, newStore func() DataStore) StoreFactory {
 	return func() (DataStore, string, func(), func()) {
-		tmp, err := os.CreateTemp("", "wal_test_*.log")
+		tmp, err := os.CreateTemp("", "wal_store_*.log")
 		if err != nil {
 			t.Fatalf("temp WAL: %v", err)
 		}
 		path := tmp.Name()
 		tmp.Close()
 
-		w, err := wal.NewWAL(path)
+		cfg := wal.Config{
+			Path:       path,
+			SyncPolicy: wal.SyncEveryWrite,
+		}
+
+		w, err := wal.NewWAL(cfg)
 		if err != nil {
 			t.Fatalf("new WAL: %v", err)
 		}
@@ -59,21 +63,19 @@ func setupFactory(t *testing.T, newStore func() DataStore) StoreFactory {
 			t.Fatalf("wal store: %v", err)
 		}
 
-		// Stop the WAL (Simulate Shutdown/Crash)
 		closeWAL := func() {
 			_ = w.Close()
 		}
 
-		// Wipe the Disk (Test Teardown)
-		deleteFile := func() {
+		cleanup := func() {
 			_ = os.Remove(path)
 		}
 
-		return ds, path, closeWAL, deleteFile
+		return ds, path, closeWAL, cleanup
 	}
 }
 
-func TestWAL_Compatibility(t *testing.T) {
+func TestWALStore_Compatibility(t *testing.T) {
 	for _, sc := range storeCases {
 		t.Run(sc.name, func(t *testing.T) {
 			factory := setupFactory(t, sc.new)
@@ -97,11 +99,10 @@ func TestWAL_Compatibility(t *testing.T) {
 	}
 }
 
-
 func testPersistence(t *testing.T, factory StoreFactory) {
-	store, _, closeWAL, deleteFile := factory()
+	store, _, closeWAL, cleanup := factory()
 	defer closeWAL()
-	defer deleteFile()
+	defer cleanup()
 
 	key := "pkey"
 	val := []byte("pval")
@@ -130,10 +131,15 @@ func testRecovery(t *testing.T, factory StoreFactory, newStore func() DataStore)
 		t.Fatalf("write failed: %v", err)
 	}
 
-	// simulate crash
+	// Simulate crash
 	closeWAL()
 
-	w2, err := wal.NewWAL(walPath)
+	cfg := wal.Config{
+		Path:       walPath,
+		SyncPolicy: wal.SyncEveryWrite,
+	}
+
+	w2, err := wal.NewWAL(cfg)
 	if err != nil {
 		t.Fatalf("new WAL: %v", err)
 	}
@@ -153,9 +159,9 @@ func testRecovery(t *testing.T, factory StoreFactory, newStore func() DataStore)
 }
 
 func testPhantomWrite(t *testing.T, factory StoreFactory) {
-	store, walPath, closeWAL, deleteFile := factory()
+	store, walPath, closeWAL, cleanup := factory()
 	defer closeWAL()
-	defer deleteFile()
+	defer cleanup()
 
 	key := "exists"
 	val1 := []byte("v1")
@@ -173,31 +179,44 @@ func testPhantomWrite(t *testing.T, factory StoreFactory) {
 		t.Fatalf("memory corrupted")
 	}
 
-	raw, _ := wal.NewWAL(walPath)
+	cfg := wal.Config{
+		Path:       walPath,
+		SyncPolicy: wal.SyncEveryWrite,
+	}
+
+	raw, _ := wal.NewWAL(cfg)
 	defer raw.Close()
 
-	foundBad := false
+	count := 0
 	raw.Replay(func(r wal.WALRecord) error {
-		if r.Key == key && r.Value == string(val2) {
-			foundBad = true
+		if r.Key == key {
+			count++
+			if r.Value != string(val1) {
+				t.Fatalf("unexpected WAL value: %s", r.Value)
+			}
 		}
 		return nil
 	})
 
-	if foundBad {
-		t.Fatalf("phantom write persisted to WAL")
+	if count != 1 {
+		t.Fatalf("phantom write detected: expected 1 record, got %d", count)
 	}
 }
 
 func testOrdering(t *testing.T, factory StoreFactory) {
-	store, walPath, closeWAL, deleteFile := factory()
+	store, walPath, closeWAL, cleanup := factory()
 	defer closeWAL()
-	defer deleteFile()
+	defer cleanup()
 
 	_ = store.Write("k", Entry{Value: []byte("1")}, PutOverwrite)
 	_ = store.Write("k", Entry{Value: []byte("2")}, PutOverwrite)
 
-	w2, _ := wal.NewWAL(walPath)
+	cfg := wal.Config{
+		Path:       walPath,
+		SyncPolicy: wal.SyncEveryWrite,
+	}
+
+	w2, _ := wal.NewWAL(cfg)
 	defer w2.Close()
 
 	mem := NewLockedStore()
@@ -209,12 +228,11 @@ func testOrdering(t *testing.T, factory StoreFactory) {
 	}
 }
 
-
 func TestWalStore_Expire(t *testing.T) {
 	factory := setupFactory(t, NewLockedStore)
-	store, walPath, closeWAL, deleteFile := factory()
+	store, walPath, closeWAL, cleanup := factory()
 	defer closeWAL()
-	defer deleteFile()
+	defer cleanup()
 
 	key := "ttl"
 	future := time.Now().Add(5 * time.Second).UnixMilli()
@@ -222,7 +240,12 @@ func TestWalStore_Expire(t *testing.T) {
 	_ = store.Write(key, Entry{Value: []byte("v")}, PutOverwrite)
 	store.Expire(key, future)
 
-	w2, _ := wal.NewWAL(walPath)
+	cfg := wal.Config{
+		Path:       walPath,
+		SyncPolicy: wal.SyncEveryWrite,
+	}
+
+	w2, _ := wal.NewWAL(cfg)
 	defer w2.Close()
 
 	mem := NewLockedStore()
