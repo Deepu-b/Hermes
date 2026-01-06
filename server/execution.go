@@ -60,6 +60,13 @@ func executeCommand(cmd protocol.Command, dataStore store.DataStore) Response {
 			}
 		}
 
+		if ttlSec < 0 {
+			return Response{
+				Kind:  ResponseClientError,
+				Value: "invalid ttl",
+			}
+		}
+
 		expirationTime := store.GetUnixTimestamp(time.Now().Add(time.Duration(ttlSec) * time.Second))
 		ok := dataStore.Expire(key, expirationTime)
 		if !ok {

@@ -204,6 +204,10 @@ Replay reconstructs the state by iterating sequentially over the log.
 Replay MUST be called before accepting writes.
 It is not safe to interleave Replay with Append.
 
+WAL recovery stops at the first invalid record.
+All prior records are considered durable and applied.
+Remaining bytes are ignored.
+
 Performance Note:
 This is a blocking operation meant to run during the "Cold Start" phase.
 It does not use the worker goroutine as the system is not yet concurrent.
@@ -222,11 +226,14 @@ func (w *wal) Replay(apply func(WALRecord) error) error {
 			continue
 		}
 
+		// Decode failure = truncate
 		rec, err := DecodeRecord(line)
 		if err != nil {
-			return err
+			// Consider recovery state till previous records
+			return nil
 		}
 
+		// apply failure = fatal error
 		if err := apply(rec); err != nil {
 			return err
 		}

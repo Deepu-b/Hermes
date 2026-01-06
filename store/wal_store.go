@@ -44,6 +44,9 @@ func NewWalStore(store DataStore, w wal.WAL) (DataStore, error) {
 			)
 
 		case wal.RecordExpire:
+			if r.Expire < 0 {
+				return wal.ErrInvalidRecord
+			}
 			_ = store.Expire(r.Key, r.Expire)
 		}
 
@@ -114,6 +117,10 @@ the disk with useless commands for keys that don't exist.
 */
 func (s *walStore) Expire(key string, unixTimestampMilli int64) bool {
 	if _, exists := s.store.Read(key); !exists {
+		return false
+	}
+
+	if unixTimestampMilli < 0 {
 		return false
 	}
 	
