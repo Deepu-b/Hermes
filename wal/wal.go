@@ -240,3 +240,35 @@ func (w *wal) Replay(apply func(WALRecord) error) error {
 	}
 	return scanner.Err()
 }
+
+/*
+Rotate requests a WAL file rotation.
+
+Responsibilities:
+- Serializes rotation with all ongoing appends
+- Preserves write ordering guarantees
+- Ensures no in-flight writes are lost
+
+Design choice:
+- Rotate() does NOT directly manipulate files
+- It sends an operation to the WAL worker
+- This preserves the single-writer invariant
+
+Failure semantics:
+- If WAL is closed, rotation is rejected
+- If rotation fails, WAL remains in a consistent state
+*/
+func (w *wal) Rotate() error {
+	reply := make(chan response, 1)
+	
+	select{
+	case w.reqChan <- request{
+		operation: opRotate,
+		reply: reply,
+	}:
+		resp := <-reply
+		return resp.err
+	case <-w.doneChan:
+		return ErrWALClosed
+	}
+}
