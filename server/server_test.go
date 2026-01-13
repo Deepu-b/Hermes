@@ -118,3 +118,29 @@ func TestServerHandlesMultipleConnections(t *testing.T) {
 
 	s.Stop()
 }
+
+func TestServer_StartListenFailure(t *testing.T) {
+	s := NewServer("invalid:addr", store.NewLockedStore())
+
+	if err := s.Start(); err == nil {
+		t.Fatalf("expected listen error")
+	}
+}
+
+func TestServer_StopWithoutStart(t *testing.T) {
+	s := NewServer(":0", store.NewLockedStore())
+	go s.Stop()
+}
+
+func TestServer_AcceptError(t *testing.T) {
+	s := NewServer(":0", store.NewLockedStore())
+
+	go func() {
+		_ = s.Start()
+	}()
+
+	<-s.ready
+	s.ln.Close() // forces Accept() error
+
+	s.Stop()
+}

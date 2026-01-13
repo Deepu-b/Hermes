@@ -43,3 +43,14 @@ func TestResponseString(t *testing.T) {
 		})
 	}
 }
+
+func TestResponse_UnknownKind(t *testing.T) {
+	r := Response{
+		Kind:  ResponseKind(999),
+		Value: "x",
+	}
+
+	if r.String() != "ERR unknown response" {
+		t.Fatalf("unexpected response string")
+	}
+}

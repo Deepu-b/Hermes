@@ -2,16 +2,31 @@ package snapshot
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
+	"io"
 	"testing"
 )
 
-/*
-TestSnapshot_RoundTrip verifies that data written to a snapshot
-can be loaded back losslessly.
+type failingWriter struct {
+	writes int
+	failAt int
+}
 
-This is the core correctness guarantee of the snapshot format.
-*/
+func (f *failingWriter) Write(p []byte) (int, error) {
+	f.writes++
+	if f.writes >= f.failAt {
+		return 0, io.ErrClosedPipe
+	}
+	return len(p), nil
+}
+
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) {
+	return 0, errors.New("synthetic read error")
+}
+
 func TestSnapshot_RoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -58,10 +73,6 @@ func TestSnapshot_RoundTrip(t *testing.T) {
 	}
 }
 
-/*
-TestSnapshot_Empty verifies that an empty snapshot
-is valid and loads successfully.
-*/
 func TestSnapshot_Empty(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -79,13 +90,37 @@ func TestSnapshot_Empty(t *testing.T) {
 	}
 }
 
-/*
-TestSnapshot_Corruption ensures that partial snapshots
-are rejected and not partially applied.
+func TestSnapshot_WriteStopsAfterError(t *testing.T) {
+	w := &failingWriter{failAt: 2}
 
-This enforces the strict corruption policy:
-"all or nothing".
-*/
+	err := Write(w, func(yield func(Item) bool) {
+		yield(Item{Key: "a", Value: []byte("1")})
+		yield(Item{Key: "b", Value: []byte("2")})
+	})
+
+	if err == nil {
+		t.Fatal("expected write error")
+	}
+}
+
+func TestSnapshot_LoadBinaryReadError(t *testing.T) {
+	err := Load(errorReader{}, func(Item) {})
+	if err == nil {
+		t.Fatal("expected read error")
+	}
+}
+
+func TestSnapshot_LoadNegativeKeyLen(t *testing.T) {
+	var buf bytes.Buffer
+	_ = binary.Write(&buf, binary.LittleEndian, int32(-1))
+
+	err := Load(&buf, func(Item) {})
+	if err != io.ErrUnexpectedEOF {
+		t.Fatalf("expected ErrUnexpectedEOF, got %v", err)
+	}
+}
+
+
 func TestSnapshot_Corruption(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -114,12 +149,6 @@ func TestSnapshot_Corruption(t *testing.T) {
 	}
 }
 
-/*
-TestSnapshot_StreamEarlyStop verifies that snapshot writing
-respects early termination.
-
-This is important for future incremental snapshotting.
-*/
 func TestSnapshot_StreamEarlyStop(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -142,5 +171,71 @@ func TestSnapshot_StreamEarlyStop(t *testing.T) {
 
 	if err != nil && err != stopErr {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSnapshot_LoadKeyReadFailure(t *testing.T) {
+	var buf bytes.Buffer
+	_ = binary.Write(&buf, binary.LittleEndian, int32(5))
+	buf.Write([]byte("ab")) // truncated
+
+	err := Load(&buf, func(Item) {})
+	if err == nil {
+		t.Fatal("expected read error")
+	}
+}
+
+func TestSnapshot_LoadNegativeValueLen(t *testing.T) {
+	var buf bytes.Buffer
+	_ = binary.Write(&buf, binary.LittleEndian, int32(1))
+	buf.Write([]byte("k"))
+	_ = binary.Write(&buf, binary.LittleEndian, int32(-1))
+
+	err := Load(&buf, func(Item) {})
+	if err != io.ErrUnexpectedEOF {
+		t.Fatalf("expected ErrUnexpectedEOF, got %v", err)
+	}
+}
+
+func TestSnapshot_LoadValueReadFailure(t *testing.T) {
+	var buf bytes.Buffer
+	_ = binary.Write(&buf, binary.LittleEndian, int32(1))
+	buf.Write([]byte("k"))
+	_ = binary.Write(&buf, binary.LittleEndian, int32(5))
+	buf.Write([]byte("ab")) // truncated
+
+	err := Load(&buf, func(Item) {})
+	if err == nil {
+		t.Fatal("expected read error")
+	}
+}
+
+func TestSnapshot_LoadExpireReadFailure(t *testing.T) {
+	var buf bytes.Buffer
+	_ = binary.Write(&buf, binary.LittleEndian, int32(1))
+	buf.Write([]byte("k"))
+	_ = binary.Write(&buf, binary.LittleEndian, int32(1))
+	buf.Write([]byte("v"))
+	// missing expire int64
+
+	err := Load(&buf, func(Item) {})
+	if err == nil {
+		t.Fatal("expected expire read error")
+	}
+}
+
+func TestSnapshot_LoadValueLenReadError(t *testing.T) {
+	var buf bytes.Buffer
+
+	// keyLen = 1
+	_ = binary.Write(&buf, binary.LittleEndian, int32(1))
+	buf.Write([]byte("k"))
+
+	// INTENTIONALLY truncate before valLen (needs 4 bytes)
+	// so binary.Read(&valLen) fails
+
+	err := Load(&buf, func(Item) {})
+	if err == nil {
+		t.Fatal("expected error while reading valLen, got nil")
 	}
 }

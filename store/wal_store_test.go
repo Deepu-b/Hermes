@@ -34,14 +34,19 @@ var storeCases = []storeCase{
 	},
 }
 
-// Returns: store, walPath, snapPath, close, cleanup
+// Returns: store, walPath, snapPath, closeFn, cleanup
 type StoreFactory func() (DataStore, string, string, func(), func())
-
 
 func setupFactory(t *testing.T, newStore func() DataStore) StoreFactory {
 	return func() (DataStore, string, string, func(), func()) {
-		walFile, _ := os.CreateTemp("", "wal_*.log")
-		snapFile, _ := os.CreateTemp("", "snapshot_*.bin")
+		walFile, err := os.CreateTemp("", "wal_*.log")
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapFile, err := os.CreateTemp("", "snapshot_*.bin")
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		walPath := walFile.Name()
 		snapPath := snapFile.Name()
@@ -66,16 +71,18 @@ func setupFactory(t *testing.T, newStore func() DataStore) StoreFactory {
 			t.Fatal(err)
 		}
 
-		closeFn := func() { _ = ds.Close() }
+		closeFn := func() {
+			_ = ds.Close()
+		}
+
 		cleanup := func() {
-			os.Remove(walPath)
-			os.Remove(snapPath)
+			_ = os.Remove(walPath)
+			_ = os.Remove(snapPath)
 		}
 
 		return ds, walPath, snapPath, closeFn, cleanup
 	}
 }
-
 
 func TestWALStore_Compatibility(t *testing.T) {
 	for _, sc := range storeCases {
@@ -102,8 +109,8 @@ func TestWALStore_Compatibility(t *testing.T) {
 }
 
 func testPersistence(t *testing.T, factory StoreFactory) {
-	store, _, _, closeWAL, cleanup := factory()
-	defer closeWAL()
+	store, _, _, closeFn, cleanup := factory()
+	defer closeFn()
 	defer cleanup()
 
 	key := "pkey"
@@ -124,7 +131,7 @@ func testPersistence(t *testing.T, factory StoreFactory) {
 }
 
 func testRecovery(t *testing.T, factory StoreFactory, newStore func() DataStore) {
-	store, walPath, snapPath, closeWAL, cleanup := factory()
+	store, walPath, snapPath, closeFn, cleanup := factory()
 	defer cleanup()
 
 	key := "survivor"
@@ -135,7 +142,7 @@ func testRecovery(t *testing.T, factory StoreFactory, newStore func() DataStore)
 	}
 
 	// Simulate crash
-	closeWAL()
+	closeFn()
 
 	cfg := wal.Config{
 		Path:       walPath,
@@ -161,8 +168,8 @@ func testRecovery(t *testing.T, factory StoreFactory, newStore func() DataStore)
 }
 
 func testPhantomWrite(t *testing.T, factory StoreFactory) {
-	store, walPath, _, closeWAL, cleanup := factory()
-	defer closeWAL()
+	store, walPath, _, closeFn, cleanup := factory()
+	defer closeFn()
 	defer cleanup()
 
 	key := "exists"
@@ -186,7 +193,10 @@ func testPhantomWrite(t *testing.T, factory StoreFactory) {
 		SyncPolicy: wal.SyncEveryWrite,
 	}
 
-	raw, _ := wal.NewWAL(cfg)
+	raw, err := wal.NewWAL(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer raw.Close()
 
 	count := 0
@@ -206,8 +216,8 @@ func testPhantomWrite(t *testing.T, factory StoreFactory) {
 }
 
 func testOrdering(t *testing.T, factory StoreFactory) {
-	store, walPath, snapPath, closeWAL, cleanup := factory()
-	defer closeWAL()
+	store, walPath, snapPath, closeFn, cleanup := factory()
+	defer closeFn()
 	defer cleanup()
 
 	_ = store.Write("k", Entry{Value: []byte("1")}, PutOverwrite)
@@ -218,11 +228,17 @@ func testOrdering(t *testing.T, factory StoreFactory) {
 		SyncPolicy: wal.SyncEveryWrite,
 	}
 
-	w2, _ := wal.NewWAL(cfg)
+	w2, err := wal.NewWAL(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer w2.Close()
 
 	mem := NewLockedStore()
-	recovered, _ := NewWalStore(mem, w2, snapPath, 0)
+	recovered, err := NewWalStore(mem, w2, snapPath, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	e, _ := recovered.Read("k")
 	if string(e.Value) != "2" {
@@ -232,8 +248,8 @@ func testOrdering(t *testing.T, factory StoreFactory) {
 
 func TestWalStore_Expire(t *testing.T) {
 	factory := setupFactory(t, NewLockedStore)
-	store, walPath, snapPath, closeWAL, cleanup := factory()
-	defer closeWAL()
+	store, walPath, snapPath, closeFn, cleanup := factory()
+	defer closeFn()
 	defer cleanup()
 
 	key := "ttl"
@@ -247,11 +263,17 @@ func TestWalStore_Expire(t *testing.T) {
 		SyncPolicy: wal.SyncEveryWrite,
 	}
 
-	w2, _ := wal.NewWAL(cfg)
+	w2, err := wal.NewWAL(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer w2.Close()
 
 	mem := NewLockedStore()
-	recovered, _ := NewWalStore(mem, w2, snapPath, 0)
+	recovered, err := NewWalStore(mem, w2, snapPath, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	e, ok := recovered.Read(key)
 	if !ok {
@@ -262,7 +284,6 @@ func TestWalStore_Expire(t *testing.T) {
 		t.Fatalf("ttl mismatch")
 	}
 }
-
 
 func TestWalStore_SnapshotRecovery(t *testing.T) {
 	factory := setupFactory(t, NewLockedStore)
@@ -276,7 +297,10 @@ func TestWalStore_SnapshotRecovery(t *testing.T) {
 	closeFn() // triggers snapshot + WAL close
 
 	cfg := wal.Config{Path: walPath, SyncPolicy: wal.SyncEveryWrite}
-	w2, _ := wal.NewWAL(cfg)
+	w2, err := wal.NewWAL(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer w2.Close()
 
 	mem := NewLockedStore()
@@ -310,9 +334,6 @@ func TestWalStore_SnapshotPhantomProtection(t *testing.T) {
 	}
 }
 
-/*
-TTL must survive snapshot + recovery.
-*/
 func TestWalStore_SnapshotExpire(t *testing.T) {
 	factory := setupFactory(t, NewLockedStore)
 	store, walPath, snapPath, closeFn, cleanup := factory()
@@ -325,14 +346,151 @@ func TestWalStore_SnapshotExpire(t *testing.T) {
 	closeFn()
 
 	cfg := wal.Config{Path: walPath, SyncPolicy: wal.SyncEveryWrite}
-	w2, _ := wal.NewWAL(cfg)
+	w2, err := wal.NewWAL(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer w2.Close()
 
 	mem := NewLockedStore()
-	recovered, _ := NewWalStore(mem, w2, snapPath, 0)
+	recovered, err := NewWalStore(mem, w2, snapPath, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	e, ok := recovered.Read("ttl")
 	if !ok || e.ExpiresAtMillis != exp {
 		t.Fatalf("TTL lost during snapshot recovery")
+	}
+}
+
+func TestSnapshotSupervisor_RunsAndStops(t *testing.T) {
+	walFile, _ := os.CreateTemp("", "wal_*.log")
+	snapFile, _ := os.CreateTemp("", "snap_*.bin")
+	defer os.Remove(walFile.Name())
+	defer os.Remove(snapFile.Name())
+
+	w, _ := wal.NewWAL(wal.Config{
+		Path:       walFile.Name(),
+		SyncPolicy: wal.SyncEveryWrite,
+	})
+
+	ds, err := NewWalStore(
+		NewLockedStore(),
+		w,
+		snapFile.Name(),
+		10*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Let supervisor tick at least once
+	time.Sleep(25 * time.Millisecond)
+
+	if err := ds.Close(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+}
+
+func TestWalStore_PutUpdateSemantics(t *testing.T) {
+	factory := setupFactory(t, NewLockedStore)
+	store, walPath, _, closeFn, cleanup := factory()
+	defer closeFn()
+	defer cleanup()
+
+	// Update missing key
+	err := store.Write("x", Entry{Value: []byte("v")}, PutUpdate)
+	if err != ErrKeyNotFound {
+		t.Fatalf("expected ErrKeyNotFound")
+	}
+
+	// Insert then update
+	_ = store.Write("x", Entry{Value: []byte("1")}, PutOverwrite)
+	err = store.Write("x", Entry{Value: []byte("2")}, PutUpdate)
+	if err != nil {
+		t.Fatalf("update failed")
+	}
+
+	cfg := wal.Config{Path: walPath, SyncPolicy: wal.SyncEveryWrite}
+	raw, _ := wal.NewWAL(cfg)
+	defer raw.Close()
+
+	count := 0
+	raw.Replay(func(r wal.WALRecord) error {
+		if r.Key == "x" {
+			count++
+		}
+		return nil
+	})
+
+	if count != 2 {
+		t.Fatalf("expected exactly 2 WAL records, got %d", count)
+	}
+}
+
+func TestWalStore_ExpireOnMissingKey(t *testing.T) {
+	factory := setupFactory(t, NewLockedStore)
+	store, _, _, closeFn, cleanup := factory()
+	defer closeFn()
+	defer cleanup()
+
+	if store.Expire("missing", time.Now().UnixMilli()) {
+		t.Fatalf("expire should fail on missing key")
+	}
+}
+
+func TestWalStore_ExpireNegativeTimestamp(t *testing.T) {
+	factory := setupFactory(t, NewLockedStore)
+	store, _, _, closeFn, cleanup := factory()
+	defer closeFn()
+	defer cleanup()
+
+	_ = store.Write("k", Entry{Value: []byte("v")}, PutOverwrite)
+	if store.Expire("k", -1) {
+		t.Fatalf("expire should fail for negative timestamp")
+	}
+}
+
+func TestWalStore_ReplayRejectsInvalidExpire(t *testing.T) {
+	walFile, _ := os.CreateTemp("", "wal_*.log")
+	snapFile, _ := os.CreateTemp("", "snap_*.bin")
+	defer os.Remove(walFile.Name())
+	defer os.Remove(snapFile.Name())
+
+	walFile.WriteString("EXPIRE key -10\n")
+	walFile.Close()
+
+	w, _ := wal.NewWAL(wal.Config{
+		Path:       walFile.Name(),
+		SyncPolicy: wal.SyncEveryWrite,
+	})
+	defer w.Close()
+
+	_, err := NewWalStore(NewLockedStore(), w, snapFile.Name(), 0)
+	if err == nil {
+		t.Fatalf("expected recovery failure for invalid EXPIRE")
+	}
+}
+
+func TestWalStore_CorruptSnapshotFailsRecovery(t *testing.T) {
+	walFile, _ := os.CreateTemp("", "wal_*.log")
+	snapFile, _ := os.CreateTemp("", "snap_*.bin")
+	defer os.Remove(walFile.Name())
+	defer os.Remove(snapFile.Name())
+
+	// Write garbage snapshot
+	snapFile.Write([]byte("corrupt data"))
+	snapFile.Close()
+
+	w, _ := wal.NewWAL(wal.Config{
+		Path:       walFile.Name(),
+		SyncPolicy: wal.SyncEveryWrite,
+	})
+	defer w.Close()
+
+	_, err := NewWalStore(NewLockedStore(), w, snapFile.Name(), 0)
+	if err == nil {
+		t.Fatalf("expected snapshot load failure")
 	}
 }
