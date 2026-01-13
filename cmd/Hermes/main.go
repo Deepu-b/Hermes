@@ -4,6 +4,7 @@ import (
 	"hermes/server"
 	"hermes/store"
 	"hermes/wal"
+	"time"
 )
 
 func main() {
@@ -13,7 +14,9 @@ func main() {
 		panic(err)
 	}
 
-	newStore, err := store.NewWalStore(s, w)
+	path := "snanshot.log"
+	snapshotInterval := time.Duration(1 * time.Minute)
+	newStore, err := store.NewWalStore(s, w, path, snapshotInterval)
 	if err != nil {
 		panic(err)
 	}
