@@ -73,6 +73,10 @@ func (s *shardedStore) Expire(key string, unixTimestampMilli int64) bool {
 	return shard.store.Expire(key, unixTimestampMilli)
 }
 
+func (s *shardedStore) Close() error {
+	return s.shards[0].store.Close()
+}
+
 /*
 getShard deterministically maps a key to its shard.
 */
@@ -99,4 +103,25 @@ getShardIndex returns the shard index for a given key.
 */
 func getShardIndex(key string, numShards int) int {
 	return int(hashString(key) % uint32(numShards))
+}
+
+func (s *shardedStore) Iterate(fn func(key string, value Entry) bool) {
+	for i := range s.shards {
+		shard := &s.shards[i]
+		shard.mu.RLock()
+		
+		shouldStop := false
+		shard.store.Iterate(func(k string, v Entry) bool {
+			if !fn(k, v) {
+				shouldStop = true
+				return false
+			}
+			return true
+		})
+		shard.mu.RUnlock()
+
+		if shouldStop {
+			break
+		}
+	}
 }

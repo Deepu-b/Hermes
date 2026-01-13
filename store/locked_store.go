@@ -58,3 +58,14 @@ func (s *lockedStore) Expire(key string, unixTimestampMilli int64) bool {
 	defer s.mu.Unlock()
 	return s.store.Expire(key, unixTimestampMilli)
 }
+
+func (s *lockedStore) Close() error {
+	return s.store.Close()
+}
+
+func (s *lockedStore) Iterate(fn func(key string, value Entry) bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	s.store.Iterate(fn)
+}

@@ -77,6 +77,30 @@ func (s *store) Expire(key string, unixTimestampMilli int64) bool{
 	return true
 }
 
+func (s *store) Close() error {
+	return nil
+}
+
+/*
+Iterate traverses all live entries in the store.
+
+Expired entries are skipped to guarantee snapshots
+never persist dead keys.
+
+Early-exit is honored to support efficient snapshot streaming.
+*/
+func (s *store) Iterate(fn func(key string, value Entry) bool) {
+	for k, v := range s.data {
+		if v.ExpiresAtMillis > 0 && GetUnixTimestamp(time.Now()) >= v.ExpiresAtMillis {
+			continue
+		}
+
+		if !fn(k, v) {
+			break
+		}
+	}
+}
+
 /*
 get retrieves the raw entry without applying expiration logic.
 Intended for internal use only.
