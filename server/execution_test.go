@@ -89,3 +89,17 @@ func TestExecuteCommand_UnknownCommand(t *testing.T) {
 		t.Fatalf("expected ResponseServerError, got %v", resp.Kind)
 	}
 }
+
+func TestExecuteCommand_ExpireNegativeTTL(t *testing.T) {
+	resp := executeCommand(
+		protocol.Command{
+			Name: protocol.CommandExpire,
+			Args: []string{"k", "-5"},
+		},
+		store.NewLockedStore(),
+	)
+
+	if resp.Kind != ResponseClientError {
+		t.Fatalf("expected client error for negative ttl")
+	}
+}

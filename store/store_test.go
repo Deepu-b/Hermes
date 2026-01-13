@@ -154,3 +154,94 @@ func TestExpireDoesNotResurrectExpiredKey(t *testing.T) {
 		t.Fatalf("expected expire to fail on expired key")
 	}
 }
+
+func TestEventLoopStore_Close(t *testing.T) {
+	s := NewEventloopStore(1)
+
+	err := s.Close()
+	if err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+}
+
+func TestLockedStore_Close(t *testing.T) {
+	s := NewLockedStore()
+	if err := s.Close(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+}
+
+func TestShardedStore_IterateEarlyStop(t *testing.T) {
+	s := NewShardedStore(4)
+
+	_ = s.Write("a", Entry{Value: []byte("1")}, PutOverwrite)
+	_ = s.Write("b", Entry{Value: []byte("2")}, PutOverwrite)
+
+	count := 0
+	iterable, ok := s.(Iterable)
+	if !ok {
+		t.Fatalf("store is not iterable")
+	}
+	iterable.Iterate(func(key string, value Entry) bool {
+		count++
+		return false // stop immediately
+	})
+
+	if count != 1 {
+		t.Fatalf("expected early stop, got %d", count)
+	}
+}
+
+func TestShardedStore_Close(t *testing.T) {
+	s := NewShardedStore(2)
+	if err := s.Close(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+}
+
+
+func TestStore_IterateSkipsExpired(t *testing.T) {
+	s := &store{data: make(map[string]Entry)}
+
+	s.set("live", Entry{Value: []byte("ok")})
+	s.set("dead", Entry{
+		Value: []byte("x"),
+		ExpiresAtMillis: GetUnixTimestamp(time.Now()) - 1,
+	})
+
+	keys := map[string]bool{}
+	s.Iterate(func(k string, _ Entry) bool {
+		keys[k] = true
+		return true
+	})
+
+	if keys["dead"] {
+		t.Fatal("expired key was iterated")
+	}
+	if !keys["live"] {
+		t.Fatal("live key missing")
+	}
+}
+
+func TestStore_IterateEarlyStop(t *testing.T) {
+	s := &store{data: make(map[string]Entry)}
+	s.set("a", Entry{Value: []byte("1")})
+	s.set("b", Entry{Value: []byte("2")})
+
+	count := 0
+	s.Iterate(func(string, Entry) bool {
+		count++
+		return false
+	})
+
+	if count != 1 {
+		t.Fatalf("expected early stop, got %d", count)
+	}
+}
+
+func TestStore_Close(t *testing.T) {
+	s := &store{data: make(map[string]Entry)}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close failed")
+	}
+}

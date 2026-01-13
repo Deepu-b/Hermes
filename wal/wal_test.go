@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,17 @@ func newTempWAL(t *testing.T, policy SyncPolicy) (WAL, string, func()) {
 
 	return w, path, cleanup
 }
+
+func TestNewWAL_OpenFileError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nope", "wal.log") 
+
+	_, err := NewWAL(Config{Path: path})
+	if err == nil {
+		t.Fatal("expected error opening WAL file")
+	}
+}
+
 
 func TestWAL_AppendAndReplay(t *testing.T) {
 	w, _, cleanup := newTempWAL(t, SyncEveryWrite)
@@ -97,6 +109,22 @@ func TestWAL_CloseIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestWAL_AppendEncodeError(t *testing.T) {
+	w, _, cleanup := newTempWAL(t, SyncEveryWrite)
+	defer cleanup()
+
+	err := w.Append(WALRecord{
+		Type:  RecordSet,
+		Key:   "",
+		Value: "v",
+	})
+
+	if err != ErrInvalidRecord {
+		t.Fatalf("expected ErrInvalidRecord, got %v", err)
+	}
+}
+
+
 func TestWAL_ConcurrentAppends(t *testing.T) {
 	w, _, cleanup := newTempWAL(t, SyncEveryWrite)
 	defer cleanup()
@@ -132,6 +160,29 @@ func TestWAL_ConcurrentAppends(t *testing.T) {
 		t.Fatalf("expected %d records, got %d", writers, count)
 	}
 }
+
+func TestWAL_ReplaySkipsEmptyLines(t *testing.T) {
+	f, _ := os.CreateTemp("", "wal_empty_*.log")
+	path := f.Name()
+	defer os.Remove(path)
+
+	_, _ = f.WriteString("\n\nSET a YQ==\n\n")
+	f.Close()
+
+	w, _ := NewWAL(Config{Path: path})
+	defer w.Close()
+
+	count := 0
+	_ = w.Replay(func(WALRecord) error {
+		count++
+		return nil
+	})
+
+	if count != 1 {
+		t.Fatalf("expected 1 record, got %d", count)
+	}
+}
+
 
 func TestWAL_BatchSyncFlushOnClose(t *testing.T) {
 	w, path, cleanup := newTempWAL(t, SyncPolicy(100*time.Millisecond))
@@ -255,8 +306,8 @@ func TestWAL_ReplayStopsOnCorruption(t *testing.T) {
 	path := f.Name()
 	defer os.Remove(path)
 
-	_, _ = f.WriteString("SET key dmFs\n") 
-	
+	_, _ = f.WriteString("SET key dmFs\n")
+
 	_, _ = f.WriteString("INVALID LINE\n")
 	f.Close()
 
@@ -279,5 +330,147 @@ func TestWAL_ReplayStopsOnCorruption(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected 1 valid record before corruption, got %d", count)
+	}
+}
+func TestWAL_AppendAfterCloseFastPath(t *testing.T) {
+	w, _, cleanup := newTempWAL(t, SyncEveryWrite)
+	defer cleanup()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+
+	err := w.Append(WALRecord{
+		Type:  RecordSet,
+		Key:   "race",
+		Value: "test",
+	})
+
+	if err != ErrWALClosed {
+		t.Fatalf("expected ErrWALClosed, got %v", err)
+	}
+}
+
+func TestWAL_AppendWhileClosing_NoPanic(t *testing.T) {
+	w, _, cleanup := newTempWAL(t, SyncEveryWrite)
+	defer cleanup()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = w.Append(WALRecord{
+				Type:  RecordSet,
+				Key:   "k",
+				Value: "v",
+			})
+		}()
+	}
+
+	_ = w.Close()
+	wg.Wait()
+}
+
+func TestWAL_CloseWorkerStuck(t *testing.T) {
+	f, err := os.CreateTemp("", "wal_stuck_*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := f.Name()
+	f.Close()
+	defer os.Remove(path)
+
+	w := &wal{
+		path:     path,
+		file:     nil, // worker will panic if run, so we don't run it
+		reqChan:  make(chan request),
+		doneChan: make(chan struct{}),
+	}
+
+	err = w.Close()
+	if err != ErrWorkerStuck {
+		t.Fatalf("expected ErrWorkerStuck, got %v", err)
+	}
+}
+
+func TestWAL_ReplayApplyError(t *testing.T) {
+	w, _, cleanup := newTempWAL(t, SyncEveryWrite)
+	defer cleanup()
+
+	_ = w.Append(WALRecord{
+		Type:  RecordSet,
+		Key:   "x",
+		Value: "y",
+	})
+	_ = w.Close()
+
+	err := w.Replay(func(WALRecord) error {
+		return errors.New("apply failed")
+	})
+
+	if err == nil {
+		t.Fatal("expected apply error, got nil")
+	}
+}
+
+func TestWAL_ReplayFileMissing(t *testing.T) {
+	w, path, cleanup := newTempWAL(t, SyncEveryWrite)
+	cleanup() // removes file
+
+	err := w.Replay(func(WALRecord) error { return nil })
+	if err == nil {
+		t.Fatal("expected error when WAL file missing")
+	}
+
+	_ = os.Remove(path)
+}
+
+func TestWorker_SyncError(t *testing.T) {
+	f, err := os.CreateTemp("", "wal_sync_err_*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := f.Name()
+	defer os.Remove(path)
+
+	w, err := NewWAL(Config{Path: path, SyncPolicy: SyncEveryWrite})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Close file under worker
+	real := w.(*wal)
+	_ = real.file.Close()
+
+	err = w.Append(WALRecord{
+		Type:  RecordSet,
+		Key:   "k",
+		Value: "v",
+	})
+
+	if err == nil {
+		t.Fatal("expected sync/write error, got nil")
+	}
+}
+
+func TestWAL_RotateRenameFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wal")
+
+	w, err := NewWAL(Config{Path: path, SyncPolicy: SyncEveryWrite})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	real := w.(*wal)
+
+	// Break rename by removing directory permissions
+	_ = os.Chmod(dir, 0500)
+	defer os.Chmod(dir, 0700)
+
+	err = real.rotate()
+	if err == nil {
+		t.Fatal("expected rotate failure")
 	}
 }
