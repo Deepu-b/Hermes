@@ -41,6 +41,13 @@ type DataStore interface {
 	// Expire sets an absolute expiration time (in Unix milliseconds) for a key.
 	// Returns false if the key does not exist or is already expired.
 	Expire(key string, unixTimestampMilli int64) bool
+
+	// Close releases all resources owned by the store.
+	Close() error
+}
+
+type Iterable interface {
+	Iterate(fn func(key string, value Entry) bool)
 }
 
 /*

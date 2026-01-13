@@ -10,6 +10,8 @@ const (
 	opRead operation = iota
 	opWrite
 	opExpire
+	opClose
+	opIterate
 )
 
 /*
@@ -25,6 +27,8 @@ type request struct {
 	value     Entry
 	mode      PutMode
 	expiresAt int64
+	
+	iterFn    func(key string, value Entry) bool
 
 	// reply is a per-request response channel used to return
 	// results back to the caller synchronously.
@@ -109,6 +113,18 @@ func (s *eventLoopStore) loop(store *store) {
 			req.reply <- response{
 				ok: ok,
 			}
+
+		case opClose:
+			err := store.Close()
+			req.reply <- response{
+				err: err,
+			}
+
+		case opIterate:
+			store.Iterate(req.iterFn)
+			req.reply <- response{
+				ok: true,
+			}
 		}
 	}
 }
@@ -172,4 +188,27 @@ func (s *eventLoopStore) Expire(key string, unixTimestampMilli int64) bool {
 
 	resp := <-reply
 	return resp.ok
+}
+
+func (s *eventLoopStore) Close() error {
+	reply := make(chan response, 1)
+
+	s.requests <- request{
+		op: opClose,
+		reply: reply,
+	}
+
+	resp := <-reply
+	return resp.err
+}
+
+func (s *eventLoopStore) Iterate(fn func(key string, value Entry) bool) {
+	reply := make(chan response, 1)
+
+	s.requests <- request{
+		op:     opIterate,
+		iterFn: fn,
+		reply:  reply,
+	}
+	<-reply
 }
