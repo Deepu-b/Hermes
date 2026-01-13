@@ -1,6 +1,10 @@
 package wal
 
-import "time"
+import (
+	"fmt"
+	"os"
+	"time"
+)
 
 /*
 walOperation represents internal commands sent to the WAL worker.
@@ -15,6 +19,7 @@ const (
 	opAppend walOperation = iota
 	opClose
 	opSync
+	opRotate
 )
 
 /*
@@ -82,6 +87,13 @@ func (w *wal) run() {
 				req.reply <- response{
 					err: err,
 				}
+
+			case opRotate:
+				_ = w.sync()
+				err := w.rotate()
+				req.reply <- response{
+					err: err,
+				}
 			}
 
 		case <-ticker:
@@ -111,4 +123,33 @@ sync syncs the file to disk
 */
 func (w *wal) sync() error {
 	return w.file.Sync()
+}
+
+/*
+rotate performs an internal WAL file rotation.
+
+This method is intentionally PRIVATE and MUST only be called
+from the WAL worker goroutine.
+
+Why rotation exists:
+- Prevents the WAL from growing unbounded
+- Enables snapshot + log truncation workflows
+- Establishes a clean "cut" in the durability timeline
+*/
+func (w *wal) rotate() error {
+	if err := w.file.Close(); err != nil {
+		return err
+	}
+
+	newName := fmt.Sprintf("%s.%d", w.path, time.Now().UnixNano())
+	if err := os.Rename(w.path, newName); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(w.path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	w.file = f
+	return nil
 }
